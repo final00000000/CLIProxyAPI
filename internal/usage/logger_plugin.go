@@ -16,9 +16,17 @@ import (
 )
 
 var statisticsEnabled atomic.Bool
+var globalStorage *Storage
 
 func init() {
 	statisticsEnabled.Store(true)
+
+	// Initialize persistent storage
+	storage, err := NewStorage("")
+	if err == nil {
+		globalStorage = storage
+	}
+
 	coreusage.RegisterPlugin(NewLoggerPlugin())
 }
 
@@ -208,6 +216,13 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 	s.requestsByHour[hourKey]++
 	s.tokensByDay[dayKey] += totalTokens
 	s.tokensByHour[hourKey] += totalTokens
+
+	// Async persist to SQLite
+	if globalStorage != nil {
+		go func() {
+			_ = globalStorage.SaveRecord(timestamp, statsKey, modelName, record.Source, record.AuthIndex, detail, failed)
+		}()
+	}
 }
 
 func (s *RequestStatistics) updateAPIStats(stats *apiStats, model string, detail RequestDetail) {
