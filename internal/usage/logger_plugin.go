@@ -149,13 +149,59 @@ func GetRequestStatistics() *RequestStatistics { return defaultRequestStatistics
 
 // NewRequestStatistics constructs an empty statistics store.
 func NewRequestStatistics() *RequestStatistics {
-	return &RequestStatistics{
+	stats := &RequestStatistics{
 		apis:           make(map[string]*apiStats),
 		requestsByDay:  make(map[string]int64),
 		requestsByHour: make(map[int]int64),
 		tokensByDay:    make(map[string]int64),
 		tokensByHour:   make(map[int]int64),
 	}
+
+	// Load persisted data from SQLite on startup
+	if globalStorage != nil {
+		if err := stats.loadFromStorage(); err == nil {
+			log.Info("usage statistics loaded from persistent storage")
+		}
+	}
+
+	return stats
+}
+
+// loadFromStorage restores aggregated statistics from SQLite
+func (s *RequestStatistics) loadFromStorage() error {
+	if s == nil || globalStorage == nil {
+		return fmt.Errorf("storage not available")
+	}
+
+	// Load aggregated totals
+	totalReq, successCnt, failureCnt, totalTok, err := globalStorage.LoadAggregates()
+	if err != nil {
+		return fmt.Errorf("failed to load aggregates: %w", err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.totalRequests = totalReq
+	s.successCount = successCnt
+	s.failureCount = failureCnt
+	s.totalTokens = totalTok
+
+	// Load daily stats
+	reqByDay, tokByDay, err := globalStorage.LoadDailyStats()
+	if err == nil {
+		s.requestsByDay = reqByDay
+		s.tokensByDay = tokByDay
+	}
+
+	// Load hourly stats
+	reqByHour, tokByHour, err := globalStorage.LoadHourlyStats()
+	if err == nil {
+		s.requestsByHour = reqByHour
+		s.tokensByHour = tokByHour
+	}
+
+	return nil
 }
 
 // Record ingests a new usage record and updates the aggregates.
