@@ -1,186 +1,156 @@
-# CLI Proxy API
+# CLIProxyAPI Fork 使用说明
 
-English | [中文](README_CN.md)
+> 这个首页 README 只说明这份 fork 在另一台电脑拉取后，想复用我这套
+> CPA / Docker 配置时，还需要自己补哪些东西。
+>
+> 原项目说明我保留了，放到下面两个文件里：
+>
+> - [原版 English README](README_ORIGINAL_EN.md)
+> - [原版中文 README](README_CN.md)
 
-A proxy server that provides OpenAI/Gemini/Claude/Codex compatible API interfaces for CLI.
+## 这个 fork 默认已经包含
 
-It now also supports OpenAI Codex (GPT models) and Claude Code via OAuth.
+- CLIProxyAPI 源码
+- Docker 部署文件
+  - `Dockerfile`
+  - `docker-compose.yml`
+  - `docker-build.sh`
+  - `docker-build.ps1`
+- 示例配置
+  - `config.example.yaml`
+  - `.env.example`
+- 认证目录骨架
+  - `auths/.gitkeep`
 
-So you can use local or multi-account CLI access with OpenAI(include Responses)/Gemini/Claude-compatible clients and SDKs.
+## 拉取后你还需要自己准备
 
-## Sponsor
+### 1. `config.yaml`
 
-[![z.ai](https://assets.router-for.me/english-5-0.jpg)](https://z.ai/subscribe?ic=8JVLJQFSKB)
+这个文件 **不会跟着 Git 一起下来**，需要自己从示例复制：
 
-This project is sponsored by Z.ai, supporting us with their GLM CODING PLAN.
+```powershell
+Copy-Item "config.example.yaml" "config.yaml"
+```
 
-GLM CODING PLAN is a subscription service designed for AI coding, starting at just $10/month. It provides access to their flagship GLM-4.7 & （GLM-5 Only Available  for Pro Users）model across 10+ popular AI coding tools (Claude Code, Cline, Roo Code, etc.), offering developers top-tier, fast, and stable coding experiences.
+至少需要按你的实际环境补这些内容：
 
-Get 10% OFF GLM CODING PLAN：https://z.ai/subscribe?ic=8JVLJQFSKB
+- `api-keys`
+- 各 provider 的 API Key / OAuth / base-url / model alias
+- 是否启用 `usage-statistics-enabled`
+- 是否启用管理面板
 
----
+### 2. `auths/` 目录里的真实认证数据
 
-<table>
-<tbody>
-<tr>
-<td width="180"><a href="https://www.packyapi.com/register?aff=cliproxyapi"><img src="./assets/packycode.png" alt="PackyCode" width="150"></a></td>
-<td>Thanks to PackyCode for sponsoring this project! PackyCode is a reliable and efficient API relay service provider, offering relay services for Claude Code, Codex, Gemini, and more. PackyCode provides special discounts for our software users: register using <a href="https://www.packyapi.com/register?aff=cliproxyapi">this link</a> and enter the "cliproxyapi" promo code during recharge to get 10% off.</td>
-</tr>
-<tr>
-<td width="180"><a href="https://www.aicodemirror.com/register?invitecode=TJNAIF"><img src="./assets/aicodemirror.png" alt="AICodeMirror" width="150"></a></td>
-<td>Thanks to AICodeMirror for sponsoring this project! AICodeMirror provides official high-stability relay services for Claude Code / Codex / Gemini CLI, with enterprise-grade concurrency, fast invoicing, and 24/7 dedicated technical support. Claude Code / Codex / Gemini official channels at 38% / 2% / 9% of original price, with extra discounts on top-ups! AICodeMirror offers special benefits for CLIProxyAPI users: register via <a href="https://www.aicodemirror.com/register?invitecode=TJNAIF">this link</a> to enjoy 20% off your first top-up, and enterprise customers can get up to 25% off!</td>
-</tr>
-</tbody>
-</table>
+`docker-compose.yml` 默认会把：
 
-## Overview
+```text
+./auths -> /root/.cli-proxy-api
+```
 
-- OpenAI/Gemini/Claude compatible API endpoints for CLI models
-- OpenAI Codex support (GPT models) via OAuth login
-- Claude Code support via OAuth login
-- Qwen Code support via OAuth login
-- iFlow support via OAuth login
-- Amp CLI and IDE extensions support with provider routing
-- Streaming and non-streaming responses
-- Function calling/tools support
-- Multimodal input support (text and images)
-- Multiple accounts with round-robin load balancing (Gemini, OpenAI, Claude, Qwen and iFlow)
-- Simple CLI authentication flows (Gemini, OpenAI, Claude, Qwen and iFlow)
-- Generative Language API Key support
-- AI Studio Build multi-account load balancing
-- Gemini CLI multi-account load balancing
-- Claude Code multi-account load balancing
-- Qwen Code multi-account load balancing
-- iFlow multi-account load balancing
-- OpenAI Codex multi-account load balancing
-- OpenAI-compatible upstream providers via config (e.g., OpenRouter)
-- Reusable Go SDK for embedding the proxy (see `docs/sdk-usage.md`)
+也就是说下面这些 **真实数据不会在 Git 里**：
 
-## Getting Started
+- Claude / Gemini / Codex / Qwen / iFlow 的 OAuth/token 文件
+- 本地认证缓存
+- 使用统计数据库 `usage_stats.db`
 
-CLIProxyAPI Guides: [https://help.router-for.me/](https://help.router-for.me/)
+如果你开启了：
 
-## Management API
+```yaml
+usage-statistics-enabled: true
+```
 
-see [MANAGEMENT_API.md](https://help.router-for.me/management/api)
+那么 SQLite 统计库会自动写到默认数据目录里；在当前 Docker 挂载方式下，
+通常就是 `auths/usage_stats.db`。
 
-## Amp CLI Support
+### 3. `.env`（可选）
 
-CLIProxyAPI includes integrated support for [Amp CLI](https://ampcode.com) and Amp IDE extensions, enabling you to use your Google/ChatGPT/Claude OAuth subscriptions with Amp's coding tools:
+默认本地文件存储场景下，`.env` **不是必需**。
 
-- Provider route aliases for Amp's API patterns (`/api/provider/{provider}/v1...`)
-- Management proxy for OAuth authentication and account features
-- Smart model fallback with automatic routing
-- **Model mapping** to route unavailable models to alternatives (e.g., `claude-opus-4.5` → `claude-sonnet-4`)
-- Security-first design with localhost-only management endpoints
+但如果你想固定镜像、改挂载路径、改部署模式，或者接入远程存储，
+就需要自己创建 `.env`。
 
-**→ [Complete Amp CLI Integration Guide](https://help.router-for.me/agent-client/amp-cli.html)**
+常见会用到的变量有：
 
-## SDK Docs
+- `CLI_PROXY_IMAGE`
+- `CLI_PROXY_CONFIG_PATH`
+- `CLI_PROXY_AUTH_PATH`
+- `CLI_PROXY_LOG_PATH`
+- `DEPLOY`
+- `VERSION`
+- `COMMIT`
+- `BUILD_DATE`
 
-- Usage: [docs/sdk-usage.md](docs/sdk-usage.md)
-- Advanced (executors & translators): [docs/sdk-advanced.md](docs/sdk-advanced.md)
-- Access: [docs/sdk-access.md](docs/sdk-access.md)
-- Watcher: [docs/sdk-watcher.md](docs/sdk-watcher.md)
-- Custom Provider Example: `examples/custom-provider`
+### 4. `logs/` 目录
 
-## Contributing
+日志目录不随 Git 同步，建议本地先创建：
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+```powershell
+New-Item -ItemType Directory -Force "logs" | Out-Null
+```
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+### 5. Docker / Docker Compose 运行环境
 
-## Who is with us?
+另一台电脑至少要有：
 
-Those projects are based on CLIProxyAPI:
+- Docker
+- Docker Compose
+- 对以下端口的可用性检查
 
-### [vibeproxy](https://github.com/automazeio/vibeproxy)
+默认 `docker-compose.yml` 会暴露这些端口：
 
-Native macOS menu bar app to use your Claude Code & ChatGPT subscriptions with AI coding tools - no API keys needed
+- `8317`
+- `8085`
+- `1455`
+- `54545`
+- `51121`
+- `11451`
 
-### [Subtitle Translator](https://github.com/VjayC/SRT-Subtitle-Translator-Validator)
+## 如果你要启用内置 Web 管理界面
 
-Browser-based tool to translate SRT subtitles using your Gemini subscription via CLIProxyAPI with automatic validation/error correction - no API keys needed
+请重点检查 `config.yaml` 里的这几项：
 
-### [CCS (Claude Code Switch)](https://github.com/kaitranntt/ccs)
+```yaml
+remote-management:
+  allow-remote: false
+  secret-key: "请改成你自己的强密码"
+  disable-control-panel: false
+  panel-github-repository: "https://github.com/router-for-me/Cli-Proxy-API-Management-Center"
+```
 
-CLI wrapper for instant switching between multiple Claude accounts and alternative models (Gemini, Codex, Antigravity) via CLIProxyAPI OAuth - no API keys needed
+说明：
 
-### [ProxyPal](https://github.com/heyhuynhgiabuu/proxypal)
+- `secret-key` 不配置的话，管理 API 会直接关闭
+- `disable-control-panel: false` 时，内置控制面板才可用
+- 控制面板资源默认来自上面这个 `panel-github-repository`
 
-Native macOS GUI for managing CLIProxyAPI: configure providers, model mappings, and endpoints via OAuth - no API keys needed.
+## `docker-compose.yml` 的默认行为
 
-### [Quotio](https://github.com/nguyenphutrong/quotio)
+当前默认配置是：
 
-Native macOS menu bar app that unifies Claude, Gemini, OpenAI, Qwen, and Antigravity subscriptions with real-time quota tracking and smart auto-failover for AI coding tools like Claude Code, OpenCode, and Droid - no API keys needed.
+- 镜像：`eceasy/cli-proxy-api:latest`
+- `pull_policy: always`
 
-### [CodMate](https://github.com/loocor/CodMate)
+这意味着：
 
-Native macOS SwiftUI app for managing CLI AI sessions (Codex, Claude Code, Gemini CLI) with unified provider management, Git review, project organization, global search, and terminal integration. Integrates CLIProxyAPI to provide OAuth authentication for Codex, Claude, Gemini, Antigravity, and Qwen Code, with built-in and third-party provider rerouting through a single proxy endpoint - no API keys needed for OAuth providers.
+- 换一台电脑直接启动时，**默认会拉远端最新镜像**
+- 不一定和你这台机器当前正在跑的镜像完全一致
 
-### [ProxyPilot](https://github.com/Finesssee/ProxyPilot)
+如果你希望多台电脑尽量一致，建议至少做一件事：
 
-Windows-native CLIProxyAPI fork with TUI, system tray, and multi-provider OAuth for AI coding tools - no API keys needed.
+1. 在 `.env` 里固定 `CLI_PROXY_IMAGE`
+2. 或者直接本地 build 后再启动
 
-### [Claude Proxy VSCode](https://github.com/uzhao/claude-proxy-vscode)
+## 最小启动步骤
 
-VSCode extension for quick switching between Claude Code models, featuring integrated CLIProxyAPI as its backend with automatic background lifecycle management.
+```powershell
+git clone -b "feature/persistent-stats-v6.8.55" <你的-fork-地址>
+cd "CLIProxyAPI"
+Copy-Item "config.example.yaml" "config.yaml"
+New-Item -ItemType Directory -Force "auths","logs" | Out-Null
+docker compose up -d
+```
 
-### [ZeroLimit](https://github.com/0xtbug/zero-limit)
+## 一句话总结
 
-Windows desktop app built with Tauri + React for monitoring AI coding assistant quotas via CLIProxyAPI. Track usage across Gemini, Claude, OpenAI Codex, and Antigravity accounts with real-time dashboard, system tray integration, and one-click proxy control - no API keys needed.
-
-### [CPA-XXX Panel](https://github.com/ferretgeek/CPA-X)
-
-A lightweight web admin panel for CLIProxyAPI with health checks, resource monitoring, real-time logs, auto-update, request statistics and pricing display. Supports one-click installation and systemd service.
-
-### [CLIProxyAPI Tray](https://github.com/kitephp/CLIProxyAPI_Tray)
-
-A Windows tray application implemented using PowerShell scripts, without relying on any third-party libraries. The main features include: automatic creation of shortcuts, silent running, password management, channel switching (Main / Plus), and automatic downloading and updating.
-
-### [霖君](https://github.com/wangdabaoqq/LinJun)
-
-霖君 is a cross-platform desktop application for managing AI programming assistants, supporting macOS, Windows, and Linux systems. Unified management of Claude Code, Gemini CLI, OpenAI Codex, Qwen Code, and other AI coding tools, with local proxy for multi-account quota tracking and one-click configuration.
-
-### [CLIProxyAPI Dashboard](https://github.com/itsmylife44/cliproxyapi-dashboard)
-
-A modern web-based management dashboard for CLIProxyAPI built with Next.js, React, and PostgreSQL. Features real-time log streaming, structured configuration editing, API key management, OAuth provider integration for Claude/Gemini/Codex, usage analytics, container management, and config sync with OpenCode via companion plugin - no manual YAML editing needed.
-
-### [All API Hub](https://github.com/qixing-jk/all-api-hub)
-
-Browser extension for one-stop management of New API-compatible relay site accounts, featuring balance and usage dashboards, auto check-in, one-click key export to common apps, in-page API availability testing, and channel/model sync and redirection. It integrates with CLIProxyAPI through the Management API for one-click provider import and config sync.
-
-### [Shadow AI](https://github.com/HEUDavid/shadow-ai)
-
-Shadow AI is an AI assistant tool designed specifically for restricted environments. It provides a stealthy operation
-mode without windows or traces, and enables cross-device AI Q&A interaction and control via the local area network (
-LAN). Essentially, it is an automated collaboration layer of "screen/audio capture + AI inference + low-friction delivery",
-helping users to immersively use AI assistants across applications on controlled devices or in restricted environments.
-
-> [!NOTE]  
-> If you developed a project based on CLIProxyAPI, please open a PR to add it to this list.
-
-## More choices
-
-Those projects are ports of CLIProxyAPI or inspired by it:
-
-### [9Router](https://github.com/decolua/9router)
-
-A Next.js implementation inspired by CLIProxyAPI, easy to install and use, built from scratch with format translation (OpenAI/Claude/Gemini/Ollama), combo system with auto-fallback, multi-account management with exponential backoff, a Next.js web dashboard, and support for CLI tools (Cursor, Claude Code, Cline, RooCode) - no API keys needed.
-
-### [OmniRoute](https://github.com/diegosouzapw/OmniRoute)
-
-Never stop coding. Smart routing to FREE & low-cost AI models with automatic fallback.
-
-OmniRoute is an AI gateway for multi-provider LLMs: an OpenAI-compatible endpoint with smart routing, load balancing, retries, and fallbacks. Add policies, rate limits, caching, and observability for reliable, cost-aware inference.
-
-> [!NOTE]  
-> If you have developed a port of CLIProxyAPI or a project inspired by it, please open a PR to add it to this list.
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+**代码、Docker 文件、UI 面板入口配置可以跟着 Git 走；**
+**真实配置、认证数据、日志、统计库这些运行态内容，需要你自己补。**
