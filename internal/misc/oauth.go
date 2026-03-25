@@ -30,12 +30,13 @@ type OAuthCallback struct {
 	ErrorDescription string
 }
 
-// AsyncPrompt runs a prompt function in a goroutine and returns channels for
-// the result. The returned channels are buffered (size 1) so the goroutine can
-// complete even if the caller abandons the channels.
+// AsyncPrompt runs a prompt function without blocking the caller's select loop.
+// The returned channels are buffered so the goroutine can finish even if the
+// caller stops listening after a callback arrives through another path.
 func AsyncPrompt(promptFn func(string) (string, error), message string) (<-chan string, <-chan error) {
 	inputCh := make(chan string, 1)
 	errCh := make(chan error, 1)
+
 	go func() {
 		input, err := promptFn(message)
 		if err != nil {
@@ -44,6 +45,7 @@ func AsyncPrompt(promptFn func(string) (string, error), message string) (<-chan 
 		}
 		inputCh <- input
 	}()
+
 	return inputCh, errCh
 }
 

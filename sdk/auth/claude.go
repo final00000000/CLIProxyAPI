@@ -152,7 +152,10 @@ waitForCallback:
 				return nil, err
 			default:
 			}
-			manualInputCh, manualInputErrCh = misc.AsyncPrompt(opts.Prompt, "Paste the Claude callback URL (or press Enter to keep waiting): ")
+			manualInputCh, manualInputErrCh = misc.AsyncPrompt(
+				opts.Prompt,
+				"Paste the Claude callback URL (or press Enter to keep waiting): ",
+			)
 			continue
 		case input := <-manualInputCh:
 			manualInputCh = nil

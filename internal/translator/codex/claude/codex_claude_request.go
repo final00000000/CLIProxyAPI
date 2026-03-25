@@ -36,15 +36,15 @@ import (
 func ConvertClaudeRequestToCodex(modelName string, inputRawJSON []byte, _ bool) []byte {
 	rawJSON := inputRawJSON
 
-	template := []byte(`{"model":"","instructions":"","input":[]}`)
+	template := `{"model":"","instructions":"","input":[]}`
 
 	rootResult := gjson.ParseBytes(rawJSON)
-	template, _ = sjson.SetBytes(template, "model", modelName)
+	template, _ = sjson.Set(template, "model", modelName)
 
 	// Process system messages and convert them to input content format.
 	systemsResult := rootResult.Get("system")
 	if systemsResult.Exists() {
-		message := []byte(`{"type":"message","role":"developer","content":[]}`)
+		message := `{"type":"message","role":"developer","content":[]}`
 		contentIndex := 0
 
 		appendSystemText := func(text string) {
@@ -52,8 +52,8 @@ func ConvertClaudeRequestToCodex(modelName string, inputRawJSON []byte, _ bool) 
 				return
 			}
 
-			message, _ = sjson.SetBytes(message, fmt.Sprintf("content.%d.type", contentIndex), "input_text")
-			message, _ = sjson.SetBytes(message, fmt.Sprintf("content.%d.text", contentIndex), text)
+			message, _ = sjson.Set(message, fmt.Sprintf("content.%d.type", contentIndex), "input_text")
+			message, _ = sjson.Set(message, fmt.Sprintf("content.%d.text", contentIndex), text)
 			contentIndex++
 		}
 
@@ -70,7 +70,7 @@ func ConvertClaudeRequestToCodex(modelName string, inputRawJSON []byte, _ bool) 
 		}
 
 		if contentIndex > 0 {
-			template, _ = sjson.SetRawBytes(template, "input.-1", message)
+			template, _ = sjson.SetRaw(template, "input.-1", message)
 		}
 	}
 
@@ -83,9 +83,9 @@ func ConvertClaudeRequestToCodex(modelName string, inputRawJSON []byte, _ bool) 
 			messageResult := messageResults[i]
 			messageRole := messageResult.Get("role").String()
 
-			newMessage := func() []byte {
-				msg := []byte(`{"type":"message","role":"","content":[]}`)
-				msg, _ = sjson.SetBytes(msg, "role", messageRole)
+			newMessage := func() string {
+				msg := `{"type": "message","role":"","content":[]}`
+				msg, _ = sjson.Set(msg, "role", messageRole)
 				return msg
 			}
 
@@ -95,7 +95,7 @@ func ConvertClaudeRequestToCodex(modelName string, inputRawJSON []byte, _ bool) 
 
 			flushMessage := func() {
 				if hasContent {
-					template, _ = sjson.SetRawBytes(template, "input.-1", message)
+					template, _ = sjson.SetRaw(template, "input.-1", message)
 					message = newMessage()
 					contentIndex = 0
 					hasContent = false
@@ -107,15 +107,15 @@ func ConvertClaudeRequestToCodex(modelName string, inputRawJSON []byte, _ bool) 
 				if messageRole == "assistant" {
 					partType = "output_text"
 				}
-				message, _ = sjson.SetBytes(message, fmt.Sprintf("content.%d.type", contentIndex), partType)
-				message, _ = sjson.SetBytes(message, fmt.Sprintf("content.%d.text", contentIndex), text)
+				message, _ = sjson.Set(message, fmt.Sprintf("content.%d.type", contentIndex), partType)
+				message, _ = sjson.Set(message, fmt.Sprintf("content.%d.text", contentIndex), text)
 				contentIndex++
 				hasContent = true
 			}
 
 			appendImageContent := func(dataURL string) {
-				message, _ = sjson.SetBytes(message, fmt.Sprintf("content.%d.type", contentIndex), "input_image")
-				message, _ = sjson.SetBytes(message, fmt.Sprintf("content.%d.image_url", contentIndex), dataURL)
+				message, _ = sjson.Set(message, fmt.Sprintf("content.%d.type", contentIndex), "input_image")
+				message, _ = sjson.Set(message, fmt.Sprintf("content.%d.image_url", contentIndex), dataURL)
 				contentIndex++
 				hasContent = true
 			}
@@ -151,8 +151,8 @@ func ConvertClaudeRequestToCodex(modelName string, inputRawJSON []byte, _ bool) 
 						}
 					case "tool_use":
 						flushMessage()
-						functionCallMessage := []byte(`{"type":"function_call"}`)
-						functionCallMessage, _ = sjson.SetBytes(functionCallMessage, "call_id", messageContentResult.Get("id").String())
+						functionCallMessage := `{"type":"function_call"}`
+						functionCallMessage, _ = sjson.Set(functionCallMessage, "call_id", messageContentResult.Get("id").String())
 						{
 							name := messageContentResult.Get("name").String()
 							toolMap := buildReverseMapFromClaudeOriginalToShort(rawJSON)
@@ -161,19 +161,19 @@ func ConvertClaudeRequestToCodex(modelName string, inputRawJSON []byte, _ bool) 
 							} else {
 								name = shortenNameIfNeeded(name)
 							}
-							functionCallMessage, _ = sjson.SetBytes(functionCallMessage, "name", name)
+							functionCallMessage, _ = sjson.Set(functionCallMessage, "name", name)
 						}
-						functionCallMessage, _ = sjson.SetBytes(functionCallMessage, "arguments", messageContentResult.Get("input").Raw)
-						template, _ = sjson.SetRawBytes(template, "input.-1", functionCallMessage)
+						functionCallMessage, _ = sjson.Set(functionCallMessage, "arguments", messageContentResult.Get("input").Raw)
+						template, _ = sjson.SetRaw(template, "input.-1", functionCallMessage)
 					case "tool_result":
 						flushMessage()
-						functionCallOutputMessage := []byte(`{"type":"function_call_output"}`)
-						functionCallOutputMessage, _ = sjson.SetBytes(functionCallOutputMessage, "call_id", messageContentResult.Get("tool_use_id").String())
+						functionCallOutputMessage := `{"type":"function_call_output"}`
+						functionCallOutputMessage, _ = sjson.Set(functionCallOutputMessage, "call_id", messageContentResult.Get("tool_use_id").String())
 
 						contentResult := messageContentResult.Get("content")
 						if contentResult.IsArray() {
 							toolResultContentIndex := 0
-							toolResultContent := []byte(`[]`)
+							toolResultContent := `[]`
 							contentResults := contentResult.Array()
 							for k := 0; k < len(contentResults); k++ {
 								toolResultContentType := contentResults[k].Get("type").String()
@@ -194,27 +194,27 @@ func ConvertClaudeRequestToCodex(modelName string, inputRawJSON []byte, _ bool) 
 											}
 											dataURL := fmt.Sprintf("data:%s;base64,%s", mediaType, data)
 
-											toolResultContent, _ = sjson.SetBytes(toolResultContent, fmt.Sprintf("%d.type", toolResultContentIndex), "input_image")
-											toolResultContent, _ = sjson.SetBytes(toolResultContent, fmt.Sprintf("%d.image_url", toolResultContentIndex), dataURL)
+											toolResultContent, _ = sjson.Set(toolResultContent, fmt.Sprintf("%d.type", toolResultContentIndex), "input_image")
+											toolResultContent, _ = sjson.Set(toolResultContent, fmt.Sprintf("%d.image_url", toolResultContentIndex), dataURL)
 											toolResultContentIndex++
 										}
 									}
 								} else if toolResultContentType == "text" {
-									toolResultContent, _ = sjson.SetBytes(toolResultContent, fmt.Sprintf("%d.type", toolResultContentIndex), "input_text")
-									toolResultContent, _ = sjson.SetBytes(toolResultContent, fmt.Sprintf("%d.text", toolResultContentIndex), contentResults[k].Get("text").String())
+									toolResultContent, _ = sjson.Set(toolResultContent, fmt.Sprintf("%d.type", toolResultContentIndex), "input_text")
+									toolResultContent, _ = sjson.Set(toolResultContent, fmt.Sprintf("%d.text", toolResultContentIndex), contentResults[k].Get("text").String())
 									toolResultContentIndex++
 								}
 							}
-							if toolResultContentIndex > 0 {
-								functionCallOutputMessage, _ = sjson.SetRawBytes(functionCallOutputMessage, "output", toolResultContent)
+							if toolResultContent != `[]` {
+								functionCallOutputMessage, _ = sjson.SetRaw(functionCallOutputMessage, "output", toolResultContent)
 							} else {
-								functionCallOutputMessage, _ = sjson.SetBytes(functionCallOutputMessage, "output", messageContentResult.Get("content").String())
+								functionCallOutputMessage, _ = sjson.Set(functionCallOutputMessage, "output", messageContentResult.Get("content").String())
 							}
 						} else {
-							functionCallOutputMessage, _ = sjson.SetBytes(functionCallOutputMessage, "output", messageContentResult.Get("content").String())
+							functionCallOutputMessage, _ = sjson.Set(functionCallOutputMessage, "output", messageContentResult.Get("content").String())
 						}
 
-						template, _ = sjson.SetRawBytes(template, "input.-1", functionCallOutputMessage)
+						template, _ = sjson.SetRaw(template, "input.-1", functionCallOutputMessage)
 					}
 				}
 				flushMessage()
@@ -229,8 +229,8 @@ func ConvertClaudeRequestToCodex(modelName string, inputRawJSON []byte, _ bool) 
 	// Convert tools declarations to the expected format for the Codex API.
 	toolsResult := rootResult.Get("tools")
 	if toolsResult.IsArray() {
-		template, _ = sjson.SetRawBytes(template, "tools", []byte(`[]`))
-		template, _ = sjson.SetBytes(template, "tool_choice", `auto`)
+		template, _ = sjson.SetRaw(template, "tools", `[]`)
+		template, _ = sjson.Set(template, "tool_choice", `auto`)
 		toolResults := toolsResult.Array()
 		// Build short name map from declared tools
 		var names []string
@@ -246,11 +246,11 @@ func ConvertClaudeRequestToCodex(modelName string, inputRawJSON []byte, _ bool) 
 			// Special handling: map Claude web search tool to Codex web_search
 			if toolResult.Get("type").String() == "web_search_20250305" {
 				// Replace the tool content entirely with {"type":"web_search"}
-				template, _ = sjson.SetRawBytes(template, "tools.-1", []byte(`{"type":"web_search"}`))
+				template, _ = sjson.SetRaw(template, "tools.-1", `{"type":"web_search"}`)
 				continue
 			}
-			tool := []byte(toolResult.Raw)
-			tool, _ = sjson.SetBytes(tool, "type", "function")
+			tool := toolResult.Raw
+			tool, _ = sjson.Set(tool, "type", "function")
 			// Apply shortened name if needed
 			if v := toolResult.Get("name"); v.Exists() {
 				name := v.String()
@@ -259,15 +259,15 @@ func ConvertClaudeRequestToCodex(modelName string, inputRawJSON []byte, _ bool) 
 				} else {
 					name = shortenNameIfNeeded(name)
 				}
-				tool, _ = sjson.SetBytes(tool, "name", name)
+				tool, _ = sjson.Set(tool, "name", name)
 			}
-			tool, _ = sjson.SetRawBytes(tool, "parameters", []byte(normalizeToolParameters(toolResult.Get("input_schema").Raw)))
-			tool, _ = sjson.DeleteBytes(tool, "input_schema")
-			tool, _ = sjson.DeleteBytes(tool, "parameters.$schema")
-			tool, _ = sjson.DeleteBytes(tool, "cache_control")
-			tool, _ = sjson.DeleteBytes(tool, "defer_loading")
-			tool, _ = sjson.SetBytes(tool, "strict", false)
-			template, _ = sjson.SetRawBytes(template, "tools.-1", tool)
+			tool, _ = sjson.SetRaw(tool, "parameters", normalizeToolParameters(toolResult.Get("input_schema").Raw))
+			tool, _ = sjson.Delete(tool, "input_schema")
+			tool, _ = sjson.Delete(tool, "parameters.$schema")
+			tool, _ = sjson.Delete(tool, "cache_control")
+			tool, _ = sjson.Delete(tool, "defer_loading")
+			tool, _ = sjson.Set(tool, "strict", false)
+			template, _ = sjson.SetRaw(template, "tools.-1", tool)
 		}
 	}
 
@@ -278,7 +278,7 @@ func ConvertClaudeRequestToCodex(modelName string, inputRawJSON []byte, _ bool) 
 	}
 
 	// Add additional configuration parameters for the Codex API.
-	template, _ = sjson.SetBytes(template, "parallel_tool_calls", parallelToolCalls)
+	template, _ = sjson.Set(template, "parallel_tool_calls", parallelToolCalls)
 
 	// Convert thinking.budget_tokens to reasoning.effort.
 	reasoningEffort := "medium"
@@ -309,13 +309,13 @@ func ConvertClaudeRequestToCodex(modelName string, inputRawJSON []byte, _ bool) 
 			}
 		}
 	}
-	template, _ = sjson.SetBytes(template, "reasoning.effort", reasoningEffort)
-	template, _ = sjson.SetBytes(template, "reasoning.summary", "auto")
-	template, _ = sjson.SetBytes(template, "stream", true)
-	template, _ = sjson.SetBytes(template, "store", false)
-	template, _ = sjson.SetBytes(template, "include", []string{"reasoning.encrypted_content"})
+	template, _ = sjson.Set(template, "reasoning.effort", reasoningEffort)
+	template, _ = sjson.Set(template, "reasoning.summary", "auto")
+	template, _ = sjson.Set(template, "stream", true)
+	template, _ = sjson.Set(template, "store", false)
+	template, _ = sjson.Set(template, "include", []string{"reasoning.encrypted_content"})
 
-	return template
+	return []byte(template)
 }
 
 // shortenNameIfNeeded applies a simple shortening rule for a single name.
@@ -418,15 +418,15 @@ func normalizeToolParameters(raw string) string {
 	if raw == "" || raw == "null" || !gjson.Valid(raw) {
 		return `{"type":"object","properties":{}}`
 	}
+	schema := raw
 	result := gjson.Parse(raw)
-	schema := []byte(raw)
 	schemaType := result.Get("type").String()
 	if schemaType == "" {
-		schema, _ = sjson.SetBytes(schema, "type", "object")
+		schema, _ = sjson.Set(schema, "type", "object")
 		schemaType = "object"
 	}
 	if schemaType == "object" && !result.Get("properties").Exists() {
-		schema, _ = sjson.SetRawBytes(schema, "properties", []byte(`{}`))
+		schema, _ = sjson.SetRaw(schema, "properties", `{}`)
 	}
-	return string(schema)
+	return schema
 }

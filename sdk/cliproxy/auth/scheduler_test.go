@@ -182,6 +182,33 @@ func TestSchedulerPick_GeminiVirtualParentUsesTwoLevelRotation(t *testing.T) {
 	}
 }
 
+func TestSchedulerPick_GeminiVirtualParentRegroupsAfterPlainAuthRemoval(t *testing.T) {
+	t.Parallel()
+
+	scheduler := newSchedulerForTest(
+		&RoundRobinSelector{},
+		&Auth{ID: "plain", Provider: "gemini-cli", Attributes: map[string]string{"priority": "0"}},
+		&Auth{ID: "group-a", Provider: "gemini-cli", Attributes: map[string]string{"priority": "0", "gemini_virtual_parent": "parent-a"}},
+		&Auth{ID: "group-b", Provider: "gemini-cli", Attributes: map[string]string{"priority": "0", "gemini_virtual_parent": "parent-b"}},
+	)
+
+	scheduler.removeAuth("plain")
+
+	wantIDs := []string{"group-a", "group-b", "group-a", "group-b"}
+	for index, wantID := range wantIDs {
+		got, errPick := scheduler.pickSingle(context.Background(), "gemini-cli", "", cliproxyexecutor.Options{}, nil)
+		if errPick != nil {
+			t.Fatalf("pickSingle() #%d error = %v", index, errPick)
+		}
+		if got == nil {
+			t.Fatalf("pickSingle() #%d auth = nil", index)
+		}
+		if got.ID != wantID {
+			t.Fatalf("pickSingle() #%d auth.ID = %q, want %q", index, got.ID, wantID)
+		}
+	}
+}
+
 func TestSchedulerPick_CodexWebsocketPrefersWebsocketEnabledSubset(t *testing.T) {
 	t.Parallel()
 
@@ -205,6 +232,477 @@ func TestSchedulerPick_CodexWebsocketPrefersWebsocketEnabledSubset(t *testing.T)
 		if got.ID != wantID {
 			t.Fatalf("pickSingle() #%d auth.ID = %q, want %q", index, got.ID, wantID)
 		}
+	}
+}
+
+func TestSchedulerPick_MixedSingleCodexProviderWebsocketPrefersWebsocketEnabledSubset(t *testing.T) {
+	t.Parallel()
+
+	scheduler := newSchedulerForTest(
+		&RoundRobinSelector{},
+		&Auth{ID: "codex-http", Provider: "codex"},
+		&Auth{ID: "codex-ws-a", Provider: "codex", Attributes: map[string]string{"websockets": "true"}},
+		&Auth{ID: "codex-ws-b", Provider: "codex", Attributes: map[string]string{"websockets": "true"}},
+	)
+
+	ctx := cliproxyexecutor.WithDownstreamWebsocket(context.Background())
+	want := []string{"codex-ws-a", "codex-ws-b", "codex-ws-a"}
+	for index, wantID := range want {
+		got, provider, errPick := scheduler.pickMixed(ctx, []string{"codex"}, "", cliproxyexecutor.Options{}, nil)
+		if errPick != nil {
+			t.Fatalf("pickMixed() #%d error = %v", index, errPick)
+		}
+		if got == nil {
+			t.Fatalf("pickMixed() #%d auth = nil", index)
+		}
+		if provider != "codex" {
+			t.Fatalf("pickMixed() #%d provider = %q, want %q", index, provider, "codex")
+		}
+		if got.ID != wantID {
+			t.Fatalf("pickMixed() #%d auth.ID = %q, want %q", index, got.ID, wantID)
+		}
+	}
+}
+
+func TestSchedulerPick_CodexWebsocketRetryFallsBackToHTTPAuths(t *testing.T) {
+	t.Parallel()
+
+	scheduler := newSchedulerForTest(
+		&RoundRobinSelector{},
+		&Auth{ID: "codex-http", Provider: "codex"},
+		&Auth{ID: "codex-ws-a", Provider: "codex", Attributes: map[string]string{"websockets": "true"}},
+		&Auth{ID: "codex-ws-b", Provider: "codex", Attributes: map[string]string{"websockets": "true"}},
+	)
+
+	ctx := cliproxyexecutor.WithDownstreamWebsocket(context.Background())
+	tried := map[string]struct{}{
+		"codex-ws-a": {},
+		"codex-ws-b": {},
+	}
+	got, errPick := scheduler.pickSingle(ctx, "codex", "", cliproxyexecutor.Options{}, tried)
+	if errPick != nil {
+		t.Fatalf("pickSingle() error = %v", errPick)
+	}
+	if got == nil {
+		t.Fatal("pickSingle() auth = nil")
+	}
+	if got.ID != "codex-http" {
+		t.Fatalf("pickSingle() auth.ID = %q, want %q", got.ID, "codex-http")
+	}
+}
+
+func TestSchedulerPick_MixedSingleCodexProviderWebsocketRetryFallsBackToHTTPAuths(t *testing.T) {
+	t.Parallel()
+
+	scheduler := newSchedulerForTest(
+		&RoundRobinSelector{},
+		&Auth{ID: "codex-http", Provider: "codex"},
+		&Auth{ID: "codex-ws-a", Provider: "codex", Attributes: map[string]string{"websockets": "true"}},
+		&Auth{ID: "codex-ws-b", Provider: "codex", Attributes: map[string]string{"websockets": "true"}},
+	)
+
+	ctx := cliproxyexecutor.WithDownstreamWebsocket(context.Background())
+	tried := map[string]struct{}{
+		"codex-ws-a": {},
+		"codex-ws-b": {},
+	}
+	got, provider, errPick := scheduler.pickMixed(ctx, []string{"codex"}, "", cliproxyexecutor.Options{}, tried)
+	if errPick != nil {
+		t.Fatalf("pickMixed() error = %v", errPick)
+	}
+	if got == nil {
+		t.Fatal("pickMixed() auth = nil")
+	}
+	if provider != "codex" {
+		t.Fatalf("pickMixed() provider = %q, want %q", provider, "codex")
+	}
+	if got.ID != "codex-http" {
+		t.Fatalf("pickMixed() auth.ID = %q, want %q", got.ID, "codex-http")
+	}
+}
+
+func TestSchedulerPick_PromotesAllExpiredBlockedEntriesBeforeApplyingTriedFilter(t *testing.T) {
+	t.Parallel()
+
+	model := "gemini-2.5-pro"
+	registerSchedulerModels(t, "gemini", model, "expired-a", "expired-b")
+	scheduler := newSchedulerForTest(
+		&RoundRobinSelector{},
+		&Auth{
+			ID:       "expired-a",
+			Provider: "gemini",
+			ModelStates: map[string]*ModelState{
+				model: {Status: StatusError, Unavailable: true, NextRetryAfter: time.Now().Add(1 * time.Minute)},
+			},
+		},
+		&Auth{
+			ID:       "expired-b",
+			Provider: "gemini",
+			ModelStates: map[string]*ModelState{
+				model: {Status: StatusError, Unavailable: true, NextRetryAfter: time.Now().Add(1 * time.Minute)},
+			},
+		},
+	)
+
+	scheduler.mu.Lock()
+	providerState := scheduler.providers["gemini"]
+	if providerState == nil {
+		scheduler.mu.Unlock()
+		t.Fatal("provider state missing")
+	}
+	shard := providerState.ensureModelLocked(model, time.Now())
+	if shard == nil {
+		scheduler.mu.Unlock()
+		t.Fatal("model shard missing")
+	}
+	expiredAt := time.Now().Add(-1 * time.Second)
+	for _, authID := range []string{"expired-a", "expired-b"} {
+		entry := shard.entries[authID]
+		if entry == nil || entry.auth == nil {
+			scheduler.mu.Unlock()
+			t.Fatalf("entry %q missing auth", authID)
+		}
+		if entry.auth.ModelStates == nil {
+			entry.auth.ModelStates = make(map[string]*ModelState)
+		}
+		if entry.auth.ModelStates[model] == nil {
+			entry.auth.ModelStates[model] = &ModelState{Status: StatusError, Unavailable: true}
+		}
+		entry.auth.ModelStates[model].NextRetryAfter = expiredAt
+		entry.nextRetryAt = expiredAt
+	}
+	scheduler.mu.Unlock()
+
+	got, errPick := scheduler.pickSingle(context.Background(), "gemini", model, cliproxyexecutor.Options{}, map[string]struct{}{"expired-a": {}})
+	if errPick != nil {
+		t.Fatalf("pickSingle() error = %v", errPick)
+	}
+	if got == nil {
+		t.Fatal("pickSingle() auth = nil")
+	}
+	if got.ID != "expired-b" {
+		t.Fatalf("pickSingle() auth.ID = %q, want %q", got.ID, "expired-b")
+	}
+
+	scheduler.mu.Lock()
+	defer scheduler.mu.Unlock()
+	providerState = scheduler.providers["gemini"]
+	shard = providerState.ensureModelLocked(model, time.Now())
+	if len(shard.blocked) != 0 {
+		t.Fatalf("blocked entries after promotion = %d, want 0", len(shard.blocked))
+	}
+}
+
+func TestSchedulerPick_PromotesExpiredBlockedPrefixWithoutTouchingFutureTail(t *testing.T) {
+	t.Parallel()
+
+	model := "gemini-2.5-pro"
+	expiredAID := "prefix-expired-a"
+	expiredBID := "prefix-expired-b"
+	futureCID := "prefix-future-c"
+	registerSchedulerModels(t, "gemini", model, expiredAID, expiredBID, futureCID)
+	scheduler := newSchedulerForTest(
+		&RoundRobinSelector{},
+		&Auth{
+			ID:       expiredAID,
+			Provider: "gemini",
+			ModelStates: map[string]*ModelState{
+				model: {Status: StatusError, Unavailable: true, NextRetryAfter: time.Now().Add(1 * time.Minute)},
+			},
+		},
+		&Auth{
+			ID:       expiredBID,
+			Provider: "gemini",
+			ModelStates: map[string]*ModelState{
+				model: {Status: StatusError, Unavailable: true, NextRetryAfter: time.Now().Add(1 * time.Minute)},
+			},
+		},
+		&Auth{
+			ID:       futureCID,
+			Provider: "gemini",
+			ModelStates: map[string]*ModelState{
+				model: {Status: StatusError, Unavailable: true, NextRetryAfter: time.Now().Add(5 * time.Minute)},
+			},
+		},
+	)
+
+	scheduler.mu.Lock()
+	providerState := scheduler.providers["gemini"]
+	if providerState == nil {
+		scheduler.mu.Unlock()
+		t.Fatal("provider state missing")
+	}
+	shard := providerState.ensureModelLocked(model, time.Now())
+	if shard == nil {
+		scheduler.mu.Unlock()
+		t.Fatal("model shard missing")
+	}
+	expiredAt := time.Now().Add(-1 * time.Second)
+	for _, authID := range []string{expiredAID, expiredBID} {
+		entry := shard.entries[authID]
+		if entry == nil || entry.auth == nil {
+			scheduler.mu.Unlock()
+			t.Fatalf("entry %q missing auth", authID)
+		}
+		if entry.auth.ModelStates == nil {
+			entry.auth.ModelStates = make(map[string]*ModelState)
+		}
+		if entry.auth.ModelStates[model] == nil {
+			entry.auth.ModelStates[model] = &ModelState{Status: StatusError, Unavailable: true}
+		}
+		entry.auth.ModelStates[model].NextRetryAfter = expiredAt
+		entry.nextRetryAt = expiredAt
+	}
+	futureEntry := shard.entries[futureCID]
+	if futureEntry == nil || futureEntry.auth == nil {
+		scheduler.mu.Unlock()
+		t.Fatal("future entry missing")
+	}
+	expectedFutureRetry := futureEntry.nextRetryAt
+	scheduler.mu.Unlock()
+
+	got, errPick := scheduler.pickSingle(context.Background(), "gemini", model, cliproxyexecutor.Options{}, map[string]struct{}{expiredAID: {}})
+	if errPick != nil {
+		t.Fatalf("pickSingle() error = %v", errPick)
+	}
+	if got == nil {
+		t.Fatal("pickSingle() auth = nil")
+	}
+	if got.ID != expiredBID {
+		t.Fatalf("pickSingle() auth.ID = %q, want %q", got.ID, expiredBID)
+	}
+
+	scheduler.mu.Lock()
+	defer scheduler.mu.Unlock()
+	providerState = scheduler.providers["gemini"]
+	shard = providerState.ensureModelLocked(model, time.Now())
+	if len(shard.blocked) != 1 {
+		t.Fatalf("blocked entries after promotion = %d, want 1", len(shard.blocked))
+	}
+	if shard.blocked[0] == nil || shard.blocked[0].auth == nil || shard.blocked[0].auth.ID != futureCID {
+		t.Fatalf("blocked tail auth = %#v, want %s", shard.blocked[0], futureCID)
+	}
+	if !shard.blocked[0].nextRetryAt.Equal(expectedFutureRetry) {
+		t.Fatalf("blocked tail retry = %v, want %v", shard.blocked[0].nextRetryAt, expectedFutureRetry)
+	}
+}
+
+func TestSchedulerApplyModelStateUpdate_FallsBackWhenAuthAggregateStateWouldChange(t *testing.T) {
+	t.Parallel()
+
+	model := "gpt-5.4"
+	registerSchedulerModels(t, "codex", model, "codex-fast-path")
+	scheduler := newSchedulerForTest(
+		&RoundRobinSelector{},
+		&Auth{ID: "codex-fast-path", Provider: "codex", Status: StatusActive},
+	)
+	scheduler.mu.Lock()
+	if providerState := scheduler.providers["codex"]; providerState != nil {
+		_ = providerState.ensureModelLocked(model, time.Now())
+	}
+	scheduler.mu.Unlock()
+
+	applied := scheduler.applyModelStateUpdate("codex-fast-path", "codex", model, &ModelState{
+		Status:         StatusError,
+		Unavailable:    true,
+		NextRetryAfter: time.Now().Add(1 * time.Minute),
+	})
+	if applied {
+		t.Fatal("applyModelStateUpdate() = true, want false so caller can fall back to full auth upsert")
+	}
+}
+
+func TestSchedulerApplyModelStateUpdate_UsesFastPathWhenAggregateStateStaysStable(t *testing.T) {
+	t.Parallel()
+
+	modelA := "gpt-5.4"
+	modelB := "gpt-5.4-mini"
+	reg := registry.GetGlobalRegistry()
+	reg.RegisterClient("codex-stable-fast-path", "codex", []*registry.ModelInfo{{ID: modelA}, {ID: modelB}})
+	t.Cleanup(func() {
+		reg.UnregisterClient("codex-stable-fast-path")
+	})
+	retryAt := time.Now().Add(2 * time.Minute)
+	scheduler := newSchedulerForTest(
+		&RoundRobinSelector{},
+		&Auth{
+			ID:             "codex-stable-fast-path",
+			Provider:       "codex",
+			Status:         StatusError,
+			Unavailable:    true,
+			NextRetryAfter: retryAt,
+			Quota: QuotaState{
+				Exceeded:      true,
+				Reason:        "quota",
+				NextRecoverAt: retryAt,
+				BackoffLevel:  2,
+				StrikeCount:   4,
+			},
+			ModelStates: map[string]*ModelState{
+				modelA: {Status: StatusActive},
+				modelB: {
+					Status:         StatusError,
+					Unavailable:    true,
+					NextRetryAfter: retryAt,
+					Quota: QuotaState{
+						Exceeded:      true,
+						Reason:        "quota",
+						NextRecoverAt: retryAt,
+						BackoffLevel:  2,
+						StrikeCount:   4,
+					},
+				},
+			},
+		},
+	)
+	scheduler.mu.Lock()
+	if providerState := scheduler.providers["codex"]; providerState != nil {
+		_ = providerState.ensureModelLocked(modelA, time.Now())
+		_ = providerState.ensureModelLocked(modelB, time.Now())
+	}
+	scheduler.mu.Unlock()
+
+	applied := scheduler.applyModelStateUpdate("codex-stable-fast-path", "codex", modelA, &ModelState{
+		Status:         StatusError,
+		Unavailable:    true,
+		NextRetryAfter: time.Now().Add(5 * time.Minute),
+	})
+	if !applied {
+		t.Fatal("applyModelStateUpdate() = false, want true when aggregate state remains unchanged")
+	}
+
+	scheduler.mu.Lock()
+	defer scheduler.mu.Unlock()
+	providerState := scheduler.providers["codex"]
+	if providerState == nil {
+		t.Fatal("provider state missing")
+	}
+	shard := providerState.ensureModelLocked(modelA, time.Now())
+	if shard == nil {
+		t.Fatal("model shard missing")
+	}
+	entry := shard.entries["codex-stable-fast-path"]
+	if entry == nil || entry.auth == nil {
+		t.Fatal("entry missing after fast path update")
+	}
+	if entry.state != scheduledStateBlocked {
+		t.Fatalf("entry.state = %v, want %v", entry.state, scheduledStateBlocked)
+	}
+	if entry.auth.Status != StatusError || !entry.auth.Unavailable {
+		t.Fatalf("auth aggregate unexpectedly changed: status=%v unavailable=%v", entry.auth.Status, entry.auth.Unavailable)
+	}
+	if !entry.auth.NextRetryAfter.Equal(retryAt) {
+		t.Fatalf("auth.NextRetryAfter = %v, want %v", entry.auth.NextRetryAfter, retryAt)
+	}
+}
+
+func TestSchedulerPick_ReturnsDetachedClone(t *testing.T) {
+	t.Parallel()
+
+	model := "gemini-2.5-pro"
+	registerSchedulerModels(t, "gemini", model, "detached")
+	scheduler := newSchedulerForTest(
+		&RoundRobinSelector{},
+		&Auth{
+			ID:       "detached",
+			Provider: "gemini",
+			Attributes: map[string]string{
+				"tag": "original",
+			},
+			ModelStates: map[string]*ModelState{
+				model: &ModelState{Status: StatusActive},
+			},
+		},
+	)
+
+	got, errPick := scheduler.pickSingle(context.Background(), "gemini", model, cliproxyexecutor.Options{}, nil)
+	if errPick != nil {
+		t.Fatalf("pickSingle() error = %v", errPick)
+	}
+	if got == nil {
+		t.Fatal("pickSingle() auth = nil")
+	}
+
+	got.Attributes["tag"] = "mutated"
+	got.ModelStates[model].Status = StatusError
+	got.ModelStates[model].Unavailable = true
+	got.ModelStates["other"] = &ModelState{Status: StatusDisabled}
+
+	gotAgain, errPick := scheduler.pickSingle(context.Background(), "gemini", model, cliproxyexecutor.Options{}, nil)
+	if errPick != nil {
+		t.Fatalf("pickSingle() second error = %v", errPick)
+	}
+	if gotAgain == nil {
+		t.Fatal("pickSingle() second auth = nil")
+	}
+	if gotAgain.Attributes["tag"] != "original" {
+		t.Fatalf("pickSingle() returned shared Attributes map, got %q", gotAgain.Attributes["tag"])
+	}
+	state := gotAgain.ModelStates[model]
+	if state == nil {
+		t.Fatalf("pickSingle() missing model state for %q", model)
+	}
+	if state.Status != StatusActive || state.Unavailable {
+		t.Fatalf("pickSingle() returned shared model state: %+v", state)
+	}
+	if _, ok := gotAgain.ModelStates["other"]; ok {
+		t.Fatal("pickSingle() returned shared ModelStates map")
+	}
+}
+
+func TestManager_Register_SchedulerSnapshotDetachedFromManagerState(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	model := "scheduler-detached-model"
+	registerSchedulerModels(t, "gemini", model, "manager-detached")
+
+	manager := NewManager(nil, &RoundRobinSelector{}, nil)
+	_, errRegister := manager.Register(ctx, &Auth{
+		ID:       "manager-detached",
+		Provider: "gemini",
+		Attributes: map[string]string{
+			"tag": "original",
+		},
+		ModelStates: map[string]*ModelState{
+			model: &ModelState{Status: StatusActive},
+		},
+	})
+	if errRegister != nil {
+		t.Fatalf("Register() error = %v", errRegister)
+	}
+
+	manager.mu.Lock()
+	current := manager.auths["manager-detached"]
+	if current == nil {
+		manager.mu.Unlock()
+		t.Fatal("manager auth missing after register")
+	}
+	current.Attributes["tag"] = "manager-mutated"
+	current.ModelStates[model] = &ModelState{
+		Status:         StatusError,
+		Unavailable:    true,
+		NextRetryAfter: time.Now().Add(1 * time.Minute),
+	}
+	manager.auths["manager-detached"] = current
+	manager.mu.Unlock()
+
+	got, errPick := manager.scheduler.pickSingle(ctx, "gemini", model, cliproxyexecutor.Options{}, nil)
+	if errPick != nil {
+		t.Fatalf("scheduler.pickSingle() error = %v", errPick)
+	}
+	if got == nil {
+		t.Fatal("scheduler.pickSingle() auth = nil")
+	}
+	if got.Attributes["tag"] != "original" {
+		t.Fatalf("scheduler snapshot mutated with manager state, got %q", got.Attributes["tag"])
+	}
+	state := got.ModelStates[model]
+	if state == nil {
+		t.Fatalf("scheduler.pickSingle() missing model state for %q", model)
+	}
+	if state.Status != StatusActive || state.Unavailable {
+		t.Fatalf("scheduler snapshot unexpectedly changed: %+v", state)
 	}
 }
 

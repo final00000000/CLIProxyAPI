@@ -72,11 +72,18 @@ type Config struct {
 	// MaxRetryCredentials defines the maximum number of credentials to try for a failed request.
 	// Set to 0 or a negative value to keep trying all available credentials (legacy behavior).
 	MaxRetryCredentials int `yaml:"max-retry-credentials" json:"max-retry-credentials"`
+	// MaxInvalidRequestRetries defines how many additional credentials may be tried
+	// after a caller-side request-shape error is detected. Set to 0 to stop
+	// immediately on the first such error.
+	MaxInvalidRequestRetries int `yaml:"max-invalid-request-retries" json:"max-invalid-request-retries"`
 	// MaxRetryInterval defines the maximum wait time in seconds before retrying a cooled-down credential.
 	MaxRetryInterval int `yaml:"max-retry-interval" json:"max-retry-interval"`
 
 	// QuotaExceeded defines the behavior when a quota is exceeded.
 	QuotaExceeded QuotaExceeded `yaml:"quota-exceeded" json:"quota-exceeded"`
+
+	// AuthMaintenance controls optional background cleanup of invalid or exhausted auth files.
+	AuthMaintenance AuthMaintenanceConfig `yaml:"auth-maintenance" json:"auth-maintenance"`
 
 	// Routing controls credential selection behavior.
 	Routing RoutingConfig `yaml:"routing" json:"routing"`
@@ -128,13 +135,19 @@ type Config struct {
 	legacyMigrationPending bool `yaml:"-" json:"-"`
 }
 
-// ClaudeHeaderDefaults configures default header values injected into Claude API requests
-// when the client does not send them. Update these when Claude Code releases a new version.
+// ClaudeHeaderDefaults configures default header values injected into Claude API requests.
+// In legacy mode, UserAgent/PackageVersion/RuntimeVersion/Timeout act as fallbacks when
+// the client omits them, while OS/Arch remain runtime-derived. When stabilized device
+// profiles are enabled, OS/Arch become the pinned platform baseline, while
+// UserAgent/PackageVersion/RuntimeVersion seed the upgradeable software fingerprint.
 type ClaudeHeaderDefaults struct {
-	UserAgent      string `yaml:"user-agent" json:"user-agent"`
-	PackageVersion string `yaml:"package-version" json:"package-version"`
-	RuntimeVersion string `yaml:"runtime-version" json:"runtime-version"`
-	Timeout        string `yaml:"timeout" json:"timeout"`
+	UserAgent              string `yaml:"user-agent" json:"user-agent"`
+	PackageVersion         string `yaml:"package-version" json:"package-version"`
+	RuntimeVersion         string `yaml:"runtime-version" json:"runtime-version"`
+	OS                     string `yaml:"os" json:"os"`
+	Arch                   string `yaml:"arch" json:"arch"`
+	Timeout                string `yaml:"timeout" json:"timeout"`
+	StabilizeDeviceProfile *bool  `yaml:"stabilize-device-profile,omitempty" json:"stabilize-device-profile,omitempty"`
 }
 
 // CodexHeaderDefaults configures fallback header values injected into Codex
@@ -184,6 +197,28 @@ type QuotaExceeded struct {
 
 	// SwitchPreviewModel indicates whether to automatically switch to a preview model when a quota is exceeded.
 	SwitchPreviewModel bool `yaml:"switch-preview-model" json:"switch-preview-model"`
+}
+
+// AuthMaintenanceConfig controls optional background cleanup of auth files that
+// repeatedly fail with terminal or quota-related errors.
+type AuthMaintenanceConfig struct {
+	// Enable starts the background maintenance queue when true.
+	Enable bool `yaml:"enable" json:"enable"`
+	// ScanIntervalSeconds defines how often the runtime auth set is scanned for delete candidates.
+	ScanIntervalSeconds int `yaml:"scan-interval-seconds" json:"scan-interval-seconds"`
+	// DeleteIntervalSeconds defines the stagger interval between queued deletions.
+	DeleteIntervalSeconds int `yaml:"delete-interval-seconds" json:"delete-interval-seconds"`
+	// DeleteStatusCodes defines HTTP status codes that should trigger deletion.
+	// Any listed status is treated as an immediate delete signal.
+	// When 429 is included, a single quota response is enough to enqueue deletion,
+	// so QuotaStrikeThreshold does not delay that path.
+	DeleteStatusCodes []int `yaml:"delete-status-codes" json:"delete-status-codes"`
+	// DeleteQuotaExceeded enables a second delete path for auths that repeatedly hit quota limits.
+	// This is most useful when 429 is not included in DeleteStatusCodes.
+	DeleteQuotaExceeded bool `yaml:"delete-quota-exceeded" json:"delete-quota-exceeded"`
+	// QuotaStrikeThreshold is the minimum number of 429 hits required before an auth is queued
+	// through the quota-exceeded path above.
+	QuotaStrikeThreshold int `yaml:"quota-strike-threshold" json:"quota-strike-threshold"`
 }
 
 // RoutingConfig configures how credentials are selected for requests.
@@ -554,6 +589,11 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	cfg.ErrorLogsMaxFiles = 10
 	cfg.UsageStatisticsEnabled = false
 	cfg.DisableCooling = false
+	cfg.AuthMaintenance.ScanIntervalSeconds = 30
+	cfg.AuthMaintenance.DeleteIntervalSeconds = 5
+	cfg.AuthMaintenance.DeleteStatusCodes = []int{401, 402, 403, 404, 429}
+	cfg.AuthMaintenance.DeleteQuotaExceeded = true
+	cfg.AuthMaintenance.QuotaStrikeThreshold = 6
 	cfg.Pprof.Enable = false
 	cfg.Pprof.Addr = DefaultPprofAddr
 	cfg.AmpCode.RestrictManagementToLocalhost = false // Default to false: API key auth is sufficient
@@ -617,6 +657,19 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	if cfg.MaxRetryCredentials < 0 {
 		cfg.MaxRetryCredentials = 0
 	}
+	if cfg.MaxInvalidRequestRetries < 0 {
+		cfg.MaxInvalidRequestRetries = 0
+	}
+	if cfg.AuthMaintenance.ScanIntervalSeconds <= 0 {
+		cfg.AuthMaintenance.ScanIntervalSeconds = 30
+	}
+	if cfg.AuthMaintenance.DeleteIntervalSeconds <= 0 {
+		cfg.AuthMaintenance.DeleteIntervalSeconds = 5
+	}
+	cfg.AuthMaintenance.DeleteStatusCodes = normalizeAuthMaintenanceStatusCodes(cfg.AuthMaintenance.DeleteStatusCodes)
+	if cfg.AuthMaintenance.QuotaStrikeThreshold <= 0 {
+		cfg.AuthMaintenance.QuotaStrikeThreshold = 6
+	}
 
 	// Sanitize Gemini API key configuration and migrate legacy entries.
 	cfg.SanitizeGeminiKeys()
@@ -629,6 +682,9 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 
 	// Sanitize Codex header defaults.
 	cfg.SanitizeCodexHeaderDefaults()
+
+	// Sanitize Claude header defaults.
+	cfg.SanitizeClaudeHeaderDefaults()
 
 	// Sanitize Claude key headers
 	cfg.SanitizeClaudeKeys()
@@ -662,6 +718,25 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 
 	// Return the populated configuration struct.
 	return &cfg, nil
+}
+
+func normalizeAuthMaintenanceStatusCodes(codes []int) []int {
+	if len(codes) == 0 {
+		return nil
+	}
+	seen := make(map[int]struct{}, len(codes))
+	out := make([]int, 0, len(codes))
+	for _, code := range codes {
+		if code < 100 || code > 599 {
+			continue
+		}
+		if _, ok := seen[code]; ok {
+			continue
+		}
+		seen[code] = struct{}{}
+		out = append(out, code)
+	}
+	return out
 }
 
 // SanitizePayloadRules validates raw JSON payload rule params and drops invalid rules.
@@ -727,6 +802,20 @@ func (cfg *Config) SanitizeCodexHeaderDefaults() {
 	}
 	cfg.CodexHeaderDefaults.UserAgent = strings.TrimSpace(cfg.CodexHeaderDefaults.UserAgent)
 	cfg.CodexHeaderDefaults.BetaFeatures = strings.TrimSpace(cfg.CodexHeaderDefaults.BetaFeatures)
+}
+
+// SanitizeClaudeHeaderDefaults trims surrounding whitespace from the
+// configured Claude fingerprint baseline values.
+func (cfg *Config) SanitizeClaudeHeaderDefaults() {
+	if cfg == nil {
+		return
+	}
+	cfg.ClaudeHeaderDefaults.UserAgent = strings.TrimSpace(cfg.ClaudeHeaderDefaults.UserAgent)
+	cfg.ClaudeHeaderDefaults.PackageVersion = strings.TrimSpace(cfg.ClaudeHeaderDefaults.PackageVersion)
+	cfg.ClaudeHeaderDefaults.RuntimeVersion = strings.TrimSpace(cfg.ClaudeHeaderDefaults.RuntimeVersion)
+	cfg.ClaudeHeaderDefaults.OS = strings.TrimSpace(cfg.ClaudeHeaderDefaults.OS)
+	cfg.ClaudeHeaderDefaults.Arch = strings.TrimSpace(cfg.ClaudeHeaderDefaults.Arch)
+	cfg.ClaudeHeaderDefaults.Timeout = strings.TrimSpace(cfg.ClaudeHeaderDefaults.Timeout)
 }
 
 // SanitizeOAuthModelAlias normalizes and deduplicates global OAuth model name aliases.

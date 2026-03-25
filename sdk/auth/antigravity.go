@@ -118,7 +118,10 @@ waitForCallback:
 				break waitForCallback
 			default:
 			}
-			manualInputCh, manualInputErrCh = misc.AsyncPrompt(opts.Prompt, "Paste the antigravity callback URL (or press Enter to keep waiting): ")
+			manualInputCh, manualInputErrCh = misc.AsyncPrompt(
+				opts.Prompt,
+				"Paste the antigravity callback URL (or press Enter to keep waiting): ",
+			)
 			continue
 		case input := <-manualInputCh:
 			manualInputCh = nil

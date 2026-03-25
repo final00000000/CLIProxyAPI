@@ -131,7 +131,10 @@ waitForCallback:
 				return nil, fmt.Errorf("iflow auth: callback wait failed: %w", err)
 			default:
 			}
-			manualInputCh, manualInputErrCh = misc.AsyncPrompt(opts.Prompt, "Paste the iFlow callback URL (or press Enter to keep waiting): ")
+			manualInputCh, manualInputErrCh = misc.AsyncPrompt(
+				opts.Prompt,
+				"Paste the iFlow callback URL (or press Enter to keep waiting): ",
+			)
 			continue
 		case input := <-manualInputCh:
 			manualInputCh = nil
