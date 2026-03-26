@@ -561,41 +561,24 @@ func (h *Handler) DownloadAuthFile(c *gin.Context) {
 	c.Data(200, "application/json", data)
 }
 
-// Upload auth file: multipart or raw JSON with ?name=
+// Upload auth file: multipart (json/zip/batch) or raw JSON with ?name=
 func (h *Handler) UploadAuthFile(c *gin.Context) {
 	if h.authManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
 		return
 	}
 	ctx := c.Request.Context()
-	if file, err := c.FormFile("file"); err == nil && file != nil {
-		name := filepath.Base(file.Filename)
-		if !strings.HasSuffix(strings.ToLower(name), ".json") {
-			c.JSON(400, gin.H{"error": "file must be .json"})
+
+	if summary, handled, err := h.handleMultipartAuthUpload(ctx, c); handled {
+		if err != nil {
+			code := authUploadStatusCode(err)
+			c.JSON(code, gin.H{"error": err.Error()})
 			return
 		}
-		dst := filepath.Join(h.cfg.AuthDir, name)
-		if !filepath.IsAbs(dst) {
-			if abs, errAbs := filepath.Abs(dst); errAbs == nil {
-				dst = abs
-			}
-		}
-		if errSave := c.SaveUploadedFile(file, dst); errSave != nil {
-			c.JSON(500, gin.H{"error": fmt.Sprintf("failed to save file: %v", errSave)})
-			return
-		}
-		data, errRead := os.ReadFile(dst)
-		if errRead != nil {
-			c.JSON(500, gin.H{"error": fmt.Sprintf("failed to read saved file: %v", errRead)})
-			return
-		}
-		if errReg := h.registerAuthFromFile(ctx, dst, data); errReg != nil {
-			c.JSON(500, gin.H{"error": errReg.Error()})
-			return
-		}
-		c.JSON(200, gin.H{"status": "ok"})
+		c.JSON(http.StatusOK, summary.toResponse())
 		return
 	}
+
 	name := c.Query("name")
 	if name == "" || strings.Contains(name, string(os.PathSeparator)) {
 		c.JSON(400, gin.H{"error": "invalid name"})
@@ -610,18 +593,9 @@ func (h *Handler) UploadAuthFile(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "failed to read body"})
 		return
 	}
-	dst := filepath.Join(h.cfg.AuthDir, filepath.Base(name))
-	if !filepath.IsAbs(dst) {
-		if abs, errAbs := filepath.Abs(dst); errAbs == nil {
-			dst = abs
-		}
-	}
-	if errWrite := os.WriteFile(dst, data, 0o600); errWrite != nil {
-		c.JSON(500, gin.H{"error": fmt.Sprintf("failed to write file: %v", errWrite)})
-		return
-	}
-	if err = h.registerAuthFromFile(ctx, dst, data); err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+	if err = h.saveAuthJSON(ctx, filepath.Base(name), data); err != nil {
+		code := authUploadStatusCode(err)
+		c.JSON(code, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(200, gin.H{"status": "ok"})

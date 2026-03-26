@@ -23,16 +23,17 @@ func TestConvertClaudeResponseToOpenAI_StreamUsageIncludesCachedTokens(t *testin
 		t.Fatalf("expected 1 chunk, got %d", len(out))
 	}
 
-	if gotPromptTokens := gjson.Get(out[0], "usage.prompt_tokens").Int(); gotPromptTokens != 22044 {
+	chunk := string(out[0])
+	if gotPromptTokens := gjson.Get(chunk, "usage.prompt_tokens").Int(); gotPromptTokens != 22044 {
 		t.Fatalf("expected prompt_tokens %d, got %d", 22044, gotPromptTokens)
 	}
-	if gotCompletionTokens := gjson.Get(out[0], "usage.completion_tokens").Int(); gotCompletionTokens != 4 {
+	if gotCompletionTokens := gjson.Get(chunk, "usage.completion_tokens").Int(); gotCompletionTokens != 4 {
 		t.Fatalf("expected completion_tokens %d, got %d", 4, gotCompletionTokens)
 	}
-	if gotTotalTokens := gjson.Get(out[0], "usage.total_tokens").Int(); gotTotalTokens != 22048 {
+	if gotTotalTokens := gjson.Get(chunk, "usage.total_tokens").Int(); gotTotalTokens != 22048 {
 		t.Fatalf("expected total_tokens %d, got %d", 22048, gotTotalTokens)
 	}
-	if gotCachedTokens := gjson.Get(out[0], "usage.prompt_tokens_details.cached_tokens").Int(); gotCachedTokens != 22000 {
+	if gotCachedTokens := gjson.Get(chunk, "usage.prompt_tokens_details.cached_tokens").Int(); gotCachedTokens != 22000 {
 		t.Fatalf("expected cached_tokens %d, got %d", 22000, gotCachedTokens)
 	}
 }
@@ -42,17 +43,18 @@ func TestConvertClaudeResponseToOpenAINonStream_UsageIncludesCachedTokens(t *tes
 		"data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"input_tokens\":13,\"output_tokens\":4,\"cache_read_input_tokens\":22000,\"cache_creation_input_tokens\":31}}\n")
 
 	out := ConvertClaudeResponseToOpenAINonStream(context.Background(), "", nil, nil, rawJSON, nil)
+	outStr := string(out)
 
-	if gotPromptTokens := gjson.Get(out, "usage.prompt_tokens").Int(); gotPromptTokens != 22044 {
+	if gotPromptTokens := gjson.Get(outStr, "usage.prompt_tokens").Int(); gotPromptTokens != 22044 {
 		t.Fatalf("expected prompt_tokens %d, got %d", 22044, gotPromptTokens)
 	}
-	if gotCompletionTokens := gjson.Get(out, "usage.completion_tokens").Int(); gotCompletionTokens != 4 {
+	if gotCompletionTokens := gjson.Get(outStr, "usage.completion_tokens").Int(); gotCompletionTokens != 4 {
 		t.Fatalf("expected completion_tokens %d, got %d", 4, gotCompletionTokens)
 	}
-	if gotTotalTokens := gjson.Get(out, "usage.total_tokens").Int(); gotTotalTokens != 22048 {
+	if gotTotalTokens := gjson.Get(outStr, "usage.total_tokens").Int(); gotTotalTokens != 22048 {
 		t.Fatalf("expected total_tokens %d, got %d", 22048, gotTotalTokens)
 	}
-	if gotCachedTokens := gjson.Get(out, "usage.prompt_tokens_details.cached_tokens").Int(); gotCachedTokens != 22000 {
+	if gotCachedTokens := gjson.Get(outStr, "usage.prompt_tokens_details.cached_tokens").Int(); gotCachedTokens != 22000 {
 		t.Fatalf("expected cached_tokens %d, got %d", 22000, gotCachedTokens)
 	}
 }

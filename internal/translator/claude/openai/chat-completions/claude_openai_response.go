@@ -207,9 +207,9 @@ func ConvertClaudeResponseToOpenAI(_ context.Context, modelName string, original
 			outputTokens := usage.Get("output_tokens").Int()
 			cacheReadInputTokens := usage.Get("cache_read_input_tokens").Int()
 			cacheCreationInputTokens := usage.Get("cache_creation_input_tokens").Int()
-			template, _ = sjson.SetBytes(template, "usage.prompt_tokens", inputTokens+cacheCreationInputTokens)
+			template, _ = sjson.SetBytes(template, "usage.prompt_tokens", inputTokens+cacheReadInputTokens+cacheCreationInputTokens)
 			template, _ = sjson.SetBytes(template, "usage.completion_tokens", outputTokens)
-			template, _ = sjson.SetBytes(template, "usage.total_tokens", inputTokens+outputTokens)
+			template, _ = sjson.SetBytes(template, "usage.total_tokens", inputTokens+cacheReadInputTokens+cacheCreationInputTokens+outputTokens)
 			template, _ = sjson.SetBytes(template, "usage.prompt_tokens_details.cached_tokens", cacheReadInputTokens)
 		}
 		return [][]byte{template}
@@ -366,9 +366,9 @@ func ConvertClaudeResponseToOpenAINonStream(_ context.Context, _ string, origina
 				outputTokens := usage.Get("output_tokens").Int()
 				cacheReadInputTokens := usage.Get("cache_read_input_tokens").Int()
 				cacheCreationInputTokens := usage.Get("cache_creation_input_tokens").Int()
-				out, _ = sjson.SetBytes(out, "usage.prompt_tokens", inputTokens+cacheCreationInputTokens)
+				out, _ = sjson.SetBytes(out, "usage.prompt_tokens", inputTokens+cacheReadInputTokens+cacheCreationInputTokens)
 				out, _ = sjson.SetBytes(out, "usage.completion_tokens", outputTokens)
-				out, _ = sjson.SetBytes(out, "usage.total_tokens", inputTokens+outputTokens)
+				out, _ = sjson.SetBytes(out, "usage.total_tokens", inputTokens+cacheReadInputTokens+cacheCreationInputTokens+outputTokens)
 				out, _ = sjson.SetBytes(out, "usage.prompt_tokens_details.cached_tokens", cacheReadInputTokens)
 			}
 		}
